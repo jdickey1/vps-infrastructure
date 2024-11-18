@@ -1,0 +1,128 @@
+---
+# Common role tasks
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install common packages
+  apt:
+    name:
+      - curl
+      - wget
+      - vim
+      - htop
+      - net-tools
+      - iotop
+      - sysstat
+      - ntp
+      - python3
+      - python3-pip
+      - git
+      - rsync
+      - ufw
+      - fail2ban
+      - unattended-upgrades
+    state: present
+
+- name: Configure timezone
+  timezone:
+    name: "{{ timezone }}"
+
+- name: Configure NTP
+  template:
+    src: ntp.conf.j2
+    dest: /etc/ntp.conf
+  notify: restart ntp
+
+- name: Enable and start NTP
+  systemd:
+    name: ntp
+    enabled: yes
+    state: started
+
+- name: Configure unattended upgrades
+  template:
+    src: 50unattended-upgrades.j2
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades
+  notify: restart unattended-upgrades
+
+- name: Configure automatic updates
+  template:
+    src: 20auto-upgrades.j2
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+
+- name: Create maintenance directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  with_items:
+    - /opt/maintenance
+    - /var/log/maintenance
+
+- name: Install maintenance scripts
+  template:
+    src: "{{ item }}.j2"
+    dest: "/opt/maintenance/{{ item }}"
+    mode: '0755'
+  with_items:
+    - daily-maintenance.sh
+    - weekly-maintenance.sh
+    - monthly-maintenance.sh
+
+- name: Configure maintenance cron jobs
+  cron:
+    name: "{{ item.name }}"
+    job: "/opt/maintenance/{{ item.script }}"
+    hour: "{{ item.hour }}"
+    minute: "{{ item.minute }}"
+    weekday: "{{ item.weekday | default(omit) }}"
+    month: "{{ item.month | default(omit) }}"
+  with_items:
+    - { name: "Daily maintenance", script: "daily-maintenance.sh", hour: "3", minute: "0" }
+    - { name: "Weekly maintenance", script: "weekly-maintenance.sh", hour: "4", minute: "0", weekday: "0" }
+    - { name: "Monthly maintenance", script: "monthly-maintenance.sh", hour: "5", minute: "0", month: "*/1" }
+
+- name: Configure sysctl
+  sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: yes
+  with_items:
+    - { key: "net.ipv4.ip_forward", value: "1" }
+    - { key: "net.ipv4.conf.all.forwarding", value: "1" }
+    - { key: "net.ipv6.conf.all.forwarding", value: "1" }
+    - { key: "net.ipv4.conf.all.send_redirects", value: "0" }
+    - { key: "net.ipv4.conf.default.send_redirects", value: "0" }
+    - { key: "net.ipv4.conf.all.accept_redirects", value: "0" }
+    - { key: "net.ipv4.conf.default.accept_redirects", value: "0" }
+    - { key: "net.ipv4.icmp_echo_ignore_broadcasts", value: "1" }
+    - { key: "net.ipv4.conf.all.rp_filter", value: "1" }
+    - { key: "net.ipv4.conf.default.rp_filter", value: "1" }
+    - { key: "kernel.sysrq", value: "0" }
+    - { key: "kernel.core_uses_pid", value: "1" }
+    - { key: "kernel.panic", value: "60" }
+    - { key: "kernel.panic_on_oops", value: "60" }
+    - { key: "vm.swappiness", value: "10" }
+    - { key: "vm.dirty_ratio", value: "20" }
+    - { key: "vm.dirty_background_ratio", value: "5" }
+    - { key: "fs.file-max", value: "65535" }
+
+- name: Configure resource limits
+  template:
+    src: limits.conf.j2
+    dest: /etc/security/limits.conf
+
+- name: Configure logrotate
+  template:
+    src: logrotate.conf.j2
+    dest: /etc/logrotate.conf
+
+- name: Configure SSH
+  template:
+    src: sshd_config.j2
+    dest: /etc/ssh/sshd_config
+  notify: restart ssh

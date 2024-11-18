@@ -1,0 +1,117 @@
+# Global config
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - localhost:9093
+
+# Load rules
+rule_files:
+  - "rules/*.yml"
+
+# Scrape configs
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Node exporter for host metrics
+  - job_name: 'node'
+    file_sd_configs:
+      - files:
+        - 'targets/nodes/*.yml'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '([^:]+)(?::\d+)?'
+        replacement: '${1}'
+
+  # VM instances
+  - job_name: 'vms'
+    file_sd_configs:
+      - files:
+        - 'targets/vms/*.yml'
+    metrics_path: '/metrics'
+    scheme: 'https'
+    tls_config:
+      insecure_skip_verify: false
+    basic_auth:
+      username: '${PROMETHEUS_USER}'
+      password: '${PROMETHEUS_PASSWORD}'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '([^:]+)(?::\d+)?'
+        replacement: '${1}'
+
+  # PostgreSQL metrics
+  - job_name: 'postgresql'
+    static_configs:
+      - targets:
+        - 'localhost:9187'
+    metrics_path: '/metrics'
+
+  # Nginx metrics
+  - job_name: 'nginx'
+    static_configs:
+      - targets:
+        - 'localhost:9113'
+    metrics_path: '/metrics'
+
+  # Application metrics
+  - job_name: 'applications'
+    file_sd_configs:
+      - files:
+        - 'targets/apps/*.yml'
+    metrics_path: '/api/metrics'
+    scheme: 'https'
+    tls_config:
+      insecure_skip_verify: false
+    basic_auth:
+      username: '${PROMETHEUS_USER}'
+      password: '${PROMETHEUS_PASSWORD}'
+
+  # Blackbox exporter for endpoint monitoring
+  - job_name: 'blackbox'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    file_sd_configs:
+      - files:
+        - 'targets/endpoints/*.yml'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: localhost:9115
+
+# Remote write configuration
+remote_write:
+  - url: '${REMOTE_WRITE_URL}'
+    basic_auth:
+      username: '${REMOTE_WRITE_USER}'
+      password: '${REMOTE_WRITE_PASSWORD}'
+    write_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'go_.*'
+        action: drop
+
+# Storage configuration
+storage:
+  tsdb:
+    path: /var/lib/prometheus
+    retention.time: ${PROMETHEUS_RETENTION}
+    retention.size: ${PROMETHEUS_STORAGE_SIZE}
+  remote_read:
+    - url: '${REMOTE_READ_URL}'
+      basic_auth:
+        username: '${REMOTE_READ_USER}'
+        password: '${REMOTE_READ_PASSWORD}'

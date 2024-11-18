@@ -1,0 +1,127 @@
+# Global config
+global:
+  resolve_timeout: 5m
+  slack_api_url: '${SLACK_WEBHOOK_URL}'
+  smtp_smarthost: '${SMTP_HOST}:587'
+  smtp_from: '${SMTP_FROM}'
+  smtp_auth_username: '${SMTP_USER}'
+  smtp_auth_password: '${SMTP_PASSWORD}'
+  smtp_require_tls: true
+
+# Templates
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Route configuration
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'slack-notifications'
+  routes:
+    # Critical alerts
+    - match:
+        severity: critical
+      receiver: 'pagerduty-critical'
+      continue: true
+      routes:
+        - match:
+            service: database
+          receiver: 'database-team'
+        - match:
+            service: application
+          receiver: 'application-team'
+
+    # Warning alerts
+    - match:
+        severity: warning
+      receiver: 'slack-notifications'
+      group_wait: 1m
+      routes:
+        - match:
+            type: performance
+          receiver: 'performance-team'
+        - match:
+            type: security
+          receiver: 'security-team'
+
+    # Infrastructure alerts
+    - match:
+        category: infrastructure
+      receiver: 'infrastructure-team'
+      group_by: ['alertname', 'instance']
+
+# Inhibition rules
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'cluster', 'service']
+
+# Receiver configuration
+receivers:
+  - name: 'slack-notifications'
+    slack_configs:
+      - channel: '#alerts'
+        send_resolved: true
+        icon_url: '${SLACK_ICON_URL}'
+        title: '{{ template "slack.title" . }}'
+        text: '{{ template "slack.text" . }}'
+        actions:
+          - type: button
+            text: 'View in Grafana'
+            url: '{{ template "slack.grafana" . }}'
+
+  - name: 'pagerduty-critical'
+    pagerduty_configs:
+      - service_key: '${PAGERDUTY_SERVICE_KEY}'
+        send_resolved: true
+        description: '{{ template "pagerduty.description" . }}'
+        client: 'AlertManager'
+        client_url: '{{ template "pagerduty.url" . }}'
+        severity: '{{ if eq .Status "firing" }}critical{{ else }}info{{ end }}'
+
+  - name: 'database-team'
+    email_configs:
+      - to: 'database-team@example.com'
+        send_resolved: true
+        headers:
+          subject: '{{ template "email.subject" . }}'
+        html: '{{ template "email.html" . }}'
+
+  - name: 'application-team'
+    email_configs:
+      - to: 'app-team@example.com'
+        send_resolved: true
+        headers:
+          subject: '{{ template "email.subject" . }}'
+        html: '{{ template "email.html" . }}'
+
+  - name: 'performance-team'
+    webhook_configs:
+      - url: '${PERFORMANCE_WEBHOOK_URL}'
+        send_resolved: true
+        http_config:
+          basic_auth:
+            username: '${WEBHOOK_USER}'
+            password: '${WEBHOOK_PASSWORD}'
+
+  - name: 'security-team'
+    webhook_configs:
+      - url: '${SECURITY_WEBHOOK_URL}'
+        send_resolved: true
+        http_config:
+          basic_auth:
+            username: '${WEBHOOK_USER}'
+            password: '${WEBHOOK_PASSWORD}'
+
+  - name: 'infrastructure-team'
+    opsgenie_configs:
+      - api_key: '${OPSGENIE_API_KEY}'
+        send_resolved: true
+        description: '{{ template "opsgenie.description" . }}'
+        source: 'AlertManager'
+        tags: ['{{ .CommonLabels.cluster }}', '{{ .CommonLabels.severity }}']
+        note: '{{ template "opsgenie.note" . }}'

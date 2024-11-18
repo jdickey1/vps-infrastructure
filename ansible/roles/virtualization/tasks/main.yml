@@ -1,0 +1,124 @@
+---
+# Virtualization role tasks
+- name: Install KVM and related packages
+  apt:
+    name:
+      - qemu-kvm
+      - libvirt-daemon-system
+      - libvirt-clients
+      - bridge-utils
+      - virt-manager
+      - python3-libvirt
+    state: present
+
+- name: Enable and start libvirtd
+  systemd:
+    name: libvirtd
+    enabled: yes
+    state: started
+
+- name: Create VM storage pool directory
+  file:
+    path: /var/lib/libvirt/images
+    state: directory
+    mode: '0711'
+    owner: root
+    group: root
+
+- name: Define default storage pool
+  virt_pool:
+    name: default
+    state: present
+    type: dir
+    target: /var/lib/libvirt/images
+    autostart: yes
+    start: yes
+
+- name: Create VM networks
+  virt_net:
+    name: "{{ item.name }}"
+    xml: "{{ lookup('template', 'templates/network.xml.j2') }}"
+    state: present
+    autostart: yes
+  with_items: "{{ vm_networks }}"
+
+- name: Install VM management tools
+  apt:
+    name:
+      - virtinst
+      - cloud-image-utils
+      - genisoimage
+    state: present
+
+- name: Create VM template directory
+  file:
+    path: /var/lib/virt-templates
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Download Ubuntu cloud image
+  get_url:
+    url: "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+    dest: /var/lib/virt-templates/ubuntu-22.04.qcow2
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Install VM management scripts
+  template:
+    src: "{{ item }}"
+    dest: "/usr/local/bin/{{ item | basename | regex_replace('\\.j2$', '') }}"
+    mode: '0755'
+    owner: root
+    group: root
+  with_fileglob:
+    - templates/scripts/*.sh.j2
+
+- name: Create VM backup directory
+  file:
+    path: /var/backups/vms
+    state: directory
+    mode: '0700'
+    owner: root
+    group: root
+
+- name: Setup VM backup script
+  template:
+    src: templates/backup-vms.sh.j2
+    dest: /usr/local/bin/backup-vms
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Setup VM backup cron job
+  cron:
+    name: "Backup VMs"
+    hour: "1"
+    minute: "0"
+    job: "/usr/local/bin/backup-vms"
+    user: root
+
+- name: Create VM monitoring directory
+  file:
+    path: /etc/prometheus/targets/vms
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Setup VM monitoring script
+  template:
+    src: templates/update-vm-targets.sh.j2
+    dest: /usr/local/bin/update-vm-targets
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Setup VM monitoring cron job
+  cron:
+    name: "Update VM monitoring targets"
+    minute: "*/5"
+    job: "/usr/local/bin/update-vm-targets"
+    user: root

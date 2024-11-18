@@ -1,0 +1,74 @@
+---
+# Host setup playbook
+- name: Setup VPS host
+  hosts: vps_hosts
+  become: yes
+  vars_files:
+    - ../vars/main.yml
+
+  pre_tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+  roles:
+    - role: common
+      tags: [common]
+    
+    - role: security
+      tags: [security]
+    
+    - role: monitoring
+      tags: [monitoring]
+    
+    - role: virtualization
+      tags: [virtualization]
+    
+    - role: networking
+      tags: [networking]
+    
+    - role: backup
+      tags: [backup]
+
+  tasks:
+    - name: Ensure system is updated
+      apt:
+        upgrade: full
+        autoremove: yes
+        autoclean: yes
+
+    - name: Set timezone
+      timezone:
+        name: "{{ timezone }}"
+
+    - name: Configure host settings
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+      with_items:
+        - { key: "net.ipv4.ip_forward", value: "1" }
+        - { key: "net.ipv4.conf.all.forwarding", value: "1" }
+        - { key: "net.ipv6.conf.all.forwarding", value: "1" }
+        - { key: "kernel.panic", value: "10" }
+        - { key: "vm.swappiness", value: "10" }
+
+    - name: Setup VM management scripts
+      copy:
+        src: files/scripts/
+        dest: /usr/local/bin/
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Create VM network bridges
+      template:
+        src: templates/netplan-bridges.yml.j2
+        dest: /etc/netplan/60-bridges.yaml
+      notify: apply netplan
+
+  handlers:
+    - name: apply netplan
+      command: netplan apply

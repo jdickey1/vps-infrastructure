@@ -1,0 +1,107 @@
+groups:
+  - name: node_alerts
+    rules:
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High CPU usage on {{ $labels.instance }}
+          description: CPU usage is above 80% for 5 minutes
+
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High memory usage on {{ $labels.instance }}
+          description: Memory usage is above 85% for 5 minutes
+
+      - alert: HighDiskUsage
+        expr: 100 - ((node_filesystem_avail_bytes * 100) / node_filesystem_size_bytes) > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High disk usage on {{ $labels.instance }}
+          description: Disk usage is above 85% for 5 minutes
+
+  - name: application_alerts
+    rules:
+      - alert: HighResponseTime
+        expr: rate(http_request_duration_seconds_sum[5m]) / rate(http_request_duration_seconds_count[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High response time
+          description: Average response time is above 1 second for 5 minutes
+
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) * 100 > 5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: High error rate
+          description: Error rate is above 5% for 5 minutes
+
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Service {{ $labels.job }} is down
+          description: Service has been down for more than 1 minute
+
+  - name: nginx_alerts
+    rules:
+      - alert: HighNginxConnections
+        expr: nginx_connections_active > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High number of Nginx connections
+          description: More than 1000 active connections for 5 minutes
+
+      - alert: NginxHighHttp4xxErrorRate
+        expr: rate(nginx_http_requests_total{status=~"4.."}[5m]) / rate(nginx_http_requests_total[5m]) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High rate of HTTP 4xx errors
+          description: More than 5% of requests are resulting in HTTP 4xx errors
+
+      - alert: NginxHighHttp5xxErrorRate
+        expr: rate(nginx_http_requests_total{status=~"5.."}[5m]) / rate(nginx_http_requests_total[5m]) * 100 > 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: High rate of HTTP 5xx errors
+          description: More than 1% of requests are resulting in HTTP 5xx errors
+
+  - name: security_alerts
+    rules:
+      - alert: UnusualNumberOfRequests
+        expr: rate(http_requests_total[5m]) > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Unusual number of requests
+          description: More than 1000 requests per second for 5 minutes
+
+      - alert: SSLCertificateExpiringSoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 86400 * 30
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: SSL Certificate expiring soon
+          description: SSL Certificate will expire in less than 30 days

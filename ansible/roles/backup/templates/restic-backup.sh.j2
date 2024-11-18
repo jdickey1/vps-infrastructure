@@ -1,0 +1,49 @@
+#!/bin/bash
+
+# Environment variables for restic
+export RESTIC_PASSWORD="{{ backup_encryption_password }}"
+export RESTIC_REPOSITORY="{{ backup_repository }}"
+
+# Additional environment variables based on chosen backend
+{% if backup_backend_vars is defined %}
+{% for key, value in backup_backend_vars.items() %}
+export {{ key }}="{{ value }}"
+{% endfor %}
+{% endif %}
+
+# Paths to backup
+BACKUP_PATHS="{{ backup_paths | join(' ') }}"
+
+# VM snapshot directory
+VM_SNAPSHOT_DIR="{{ vm_snapshot_dir }}"
+
+# Create VM snapshots
+for domain in $(virsh list --name); do
+    snapshot_name="backup-$(date +%Y%m%d-%H%M%S)"
+    virsh snapshot-create-as --domain "$domain" --name "$snapshot_name" --disk-only --atomic
+done
+
+# Run backup
+restic backup $BACKUP_PATHS $VM_SNAPSHOT_DIR
+
+# Clean up old snapshots
+restic forget --keep-daily {{ backup_keep_daily }} \
+              --keep-weekly {{ backup_keep_weekly }} \
+              --keep-monthly {{ backup_keep_monthly }} \
+              --prune
+
+# Remove VM snapshots
+for domain in $(virsh list --name); do
+    latest_snapshot=$(virsh snapshot-list --domain "$domain" --name | tail -1)
+    virsh snapshot-delete --domain "$domain" --snapshotname "$latest_snapshot"
+done
+
+# Check backup health
+restic check
+
+# Send notification
+if [ $? -eq 0 ]; then
+    echo "Backup completed successfully" | mail -s "Backup Status" {{ backup_notification_email }}
+else
+    echo "Backup failed" | mail -s "Backup Status - FAILED" {{ backup_notification_email }}
+fi

@@ -1,0 +1,156 @@
+---
+# Backup role tasks
+
+- name: Install backup packages
+  apt:
+    name:
+      - rsync
+      - duplicity
+      - gpg
+      - pigz
+      - zstd
+      - rclone
+      - restic
+    state: present
+
+- name: Create backup directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0700'
+    owner: root
+    group: root
+  with_items:
+    - /var/backups/vms
+    - /var/backups/data
+    - /var/backups/configs
+    - /var/backups/logs
+    - /var/backups/keys
+    - /var/backups/scripts
+
+- name: Configure backup encryption
+  block:
+    - name: Generate GPG key
+      command: |
+        gpg --batch --gen-key << EOF
+        Key-Type: RSA
+        Key-Length: 4096
+        Name-Real: Backup System
+        Name-Email: {{ backup_email }}
+        Expire-Date: 0
+        %no-protection
+        %commit
+        EOF
+      args:
+        creates: /root/.gnupg/pubring.kbx
+
+    - name: Export public key
+      command: gpg --export --armor "Backup System" > /var/backups/keys/backup.pub
+      args:
+        creates: /var/backups/keys/backup.pub
+
+    - name: Export private key
+      command: gpg --export-secret-keys --armor "Backup System" > /var/backups/keys/backup.key
+      args:
+        creates: /var/backups/keys/backup.key
+
+- name: Install backup scripts
+  template:
+    src: "{{ item }}.j2"
+    dest: "/var/backups/scripts/{{ item }}"
+    mode: '0700'
+    owner: root
+    group: root
+  with_items:
+    - backup-vm.sh
+    - backup-data.sh
+    - backup-config.sh
+    - verify-backups.sh
+    - restore-vm.sh
+    - restore-data.sh
+    - prune-backups.sh
+
+- name: Configure backup schedule
+  cron:
+    name: "{{ item.name }}"
+    job: "/var/backups/scripts/{{ item.script }}"
+    minute: "{{ item.minute }}"
+    hour: "{{ item.hour }}"
+    weekday: "{{ item.weekday | default(omit) }}"
+  with_items:
+    - { name: "VM backup", script: "backup-vm.sh", minute: "0", hour: "1" }
+    - { name: "Data backup", script: "backup-data.sh", minute: "0", hour: "2" }
+    - { name: "Config backup", script: "backup-config.sh", minute: "0", hour: "3" }
+    - { name: "Verify backups", script: "verify-backups.sh", minute: "0", hour: "4" }
+    - { name: "Prune backups", script: "prune-backups.sh", minute: "0", hour: "5", weekday: "0" }
+
+- name: Configure backup monitoring
+  template:
+    src: backup-monitor.sh.j2
+    dest: /usr/local/bin/backup-monitor.sh
+    mode: '0755'
+
+- name: Configure backup monitoring service
+  template:
+    src: backup-monitor.service.j2
+    dest: /etc/systemd/system/backup-monitor.service
+  notify: reload systemd
+
+- name: Enable and start backup monitoring
+  systemd:
+    name: backup-monitor
+    enabled: yes
+    state: started
+
+- name: Configure backup metrics
+  template:
+    src: backup-metrics.yml.j2
+    dest: /etc/prometheus/targets/backup.yml
+  notify: reload prometheus
+
+- name: Configure backup alerts
+  template:
+    src: backup-alerts.yml.j2
+    dest: /etc/prometheus/rules/backup.yml
+  notify: reload prometheus
+
+- name: Configure backup logging
+  template:
+    src: backup-logging.conf.j2
+    dest: /etc/rsyslog.d/backup.conf
+  notify: restart rsyslog
+
+- name: Configure backup log rotation
+  template:
+    src: backup-logrotate.j2
+    dest: /etc/logrotate.d/backup
+
+- name: Configure backup notification
+  template:
+    src: backup-notify.sh.j2
+    dest: /usr/local/bin/backup-notify.sh
+    mode: '0755'
+
+- name: Configure restic repository
+  command: |
+    restic init --repo /var/backups/data
+  args:
+    creates: /var/backups/data/config
+  environment:
+    RESTIC_PASSWORD: "{{ restic_password }}"
+
+- name: Configure rclone for remote backup
+  template:
+    src: rclone.conf.j2
+    dest: /root/.config/rclone/rclone.conf
+    mode: '0600'
+
+- name: Configure backup retention policy
+  template:
+    src: retention-policy.yml.j2
+    dest: /etc/backup/retention-policy.yml
+
+- name: Configure backup verification
+  template:
+    src: verify-policy.yml.j2
+    dest: /etc/backup/verify-policy.yml
